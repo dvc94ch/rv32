@@ -1,0 +1,14 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+nmigen = {git = "https://github.com/nmigen/nmigen"}
+nmigen-boards = {git = "https://github.com/nmigen/nmigen-boards"}
+nmigen-soc = {git = "https://github.com/nmigen/nmigen-soc"}
+
+[dev-packages]
+
+[requires]
+python_version = "3.9"
