@@ -7,6 +7,7 @@ name = "pypi"
 nmigen = {git = "https://github.com/nmigen/nmigen"}
 nmigen-boards = {git = "https://github.com/nmigen/nmigen-boards"}
 nmigen-soc = {git = "https://github.com/nmigen/nmigen-soc"}
+verilog-vcd = "*"
 
 [dev-packages]
 

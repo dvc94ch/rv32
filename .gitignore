@@ -1,2 +1,7 @@
 *.vcd
+*.s
+*.o
+*.v
 build/
+checks/
+__pycache__/
