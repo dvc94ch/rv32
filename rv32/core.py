@@ -2,6 +2,7 @@ from nmigen import *
 from nmigen.hdl.rec import *
 from nmigen.sim import *
 from .alu import ALU
+from .decoder import Decoder
 from .regs import Registers
 from .rom import ROM
 
@@ -66,6 +67,9 @@ class RV32(Elaboratable):
         next_pc = Signal(32)
         trap = Signal()
         intr = Signal()
+        funct4 = Signal(4)
+        imm = Signal(32)
+        imm_en = Signal()
 
         decoder = m.submodules.decoder = Decoder()
         regs    = m.submodules.regs    = Registers()
@@ -78,12 +82,15 @@ class RV32(Elaboratable):
             decoder.inst.eq(self.ibus.dat_r),
             regs.rs1_addr.eq(decoder.rs1),
             regs.rs2_addr.eq(decoder.rs2),
-            alu.funct4.eq(decoder.funct4),
+            alu.funct4.eq(funct4),
             alu.in1.eq(regs.rs1_data),
+            alu.in2.eq(Mux(imm_en, imm, regs.rs2_data)),
             regs.rd_data.eq(alu.out),
         ]
         m.d.sync += [
-            alu.in2.eq(Mux(decoder.shamt_or_reg, regs.rs2_data, decoder.imm)),
+            funct4.eq(decoder.funct4),
+            imm.eq(decoder.imm),
+            imm_en.eq(decoder.imm_en),
             regs.rd_addr.eq(decoder.rd),
         ]
 
@@ -138,92 +145,6 @@ class RV32(Elaboratable):
                 m.d.sync += self.rvfi.trap.eq(0)
 
         return m
-
-
-
-class Decoder(Elaboratable):
-    def __init__(self):
-        self.inst = Signal(32)
-        self.imm = Signal(32)
-        self.rs1 = Signal(5)
-        self.rs2 = Signal(5)
-        self.rd = Signal(5)
-        self.funct4 = Signal(4)
-        self.shamt_or_reg = Signal()
-        self.trap = Signal()
-
-    def elaborate(self, platform):
-        m = Module()
-        inst = self.inst
-        funct3 = inst[12:15]
-        funct7 = inst[25:32]
-        funct7_valid = Signal()
-        m.d.comb += [
-            self.rs1.eq(inst[15:20]),
-            self.rs2.eq(Mux(self.shamt_or_reg, inst[20:25], 0)),
-            self.rd.eq(inst[7:12]),
-            self.funct4.eq(Cat(Mux(self.shamt_or_reg, funct7[5], 0), funct3)),
-        ]
-        with m.Switch(funct7):
-            with m.Case('0-00000'):
-                with m.If(funct3 == 0b101):
-                    m.d.comb += funct7_valid.eq(1)
-                with m.If(funct3 == 0b000):
-                    m.d.comb += funct7_valid.eq(1)
-        with m.If(inst[0:2] != 0b11):
-            m.d.comb += self.trap.eq(1)
-        with m.If(self.shamt_or_reg & ~funct7_valid):
-            m.d.comb += self.trap.eq(1)
-
-        imm_i = Signal(32)
-        imm_s = Signal(32)
-        imm_b = Signal(32)
-        imm_u = Signal(32)
-        imm_j = Signal(32)
-        m.d.comb += [
-            imm_i.eq(Cat(inst[20:31], Repl(inst[31], 21))),
-            imm_s.eq(Cat(inst[7], inst[8:12], inst[25:31], Repl(inst[31], 21))),
-            imm_b.eq(Cat(0, inst[8:12], inst[25:31], inst[7], Repl(inst[31], 20))),
-            imm_u.eq(Cat(Repl(0, 12), inst[12:20], inst[20:31], inst[31])),
-            imm_j.eq(Cat(0, inst[21:25], inst[25:31], inst[20], inst[12:19], Repl(inst[31], 12))),
-        ]
-        with m.Switch(inst[2:7]):
-            '''with m.Case(Opcode.LUI):
-                m.d.comb += self.imm.eq(imm_u)
-            with m.Case(Opcode.AUIPC):
-                m.d.comb += self.imm.eq(imm_u)
-            with m.Case(Opcode.JAL):
-                m.d.comb += self.imm.eq(imm_j)
-            with m.Case(Opcode.JALR):
-                m.d.comb += self.imm.eq(imm_i)
-            with m.Case(Opcode.BRANCH):
-                m.d.comb += self.imm.eq(imm_b)
-            with m.Case(Opcode.LOAD):
-                m.d.comb += self.imm.eq(imm_i)
-            with m.Case(Opcode.STORE):
-                m.d.comb += self.imm.eq(imm_s)'''
-            with m.Case(Opcode.IMM):
-                m.d.comb += self.imm.eq(imm_i)
-                with m.Switch(funct3):
-                    with m.Case('-01'):
-                        m.d.comb += self.shamt_or_reg.eq(1)
-            with m.Case(Opcode.REG):
-                m.d.comb += self.shamt_or_reg.eq(1)
-            with m.Default():
-                m.d.comb += self.trap.eq(1)
-        return m
-
-
-class Opcode:
-    LUI    = 0b01101
-    AUIPC  = 0b00101
-    JAL    = 0b11011
-    JALR   = 0b11001
-    BRANCH = 0b11000
-    LOAD   = 0b00000
-    STORE  = 0b01000
-    IMM    = 0b00100
-    REG    = 0b01100
 
 
 class Top(Elaboratable):
