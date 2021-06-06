@@ -10,7 +10,7 @@ class ROM(Elaboratable, Interface):
         self.data = Memory(width = 32, depth = self.size, init = data)
         self.r = self.data.read_port()
 
-        Interface.__init__(self, data_width = 32, addr_width = ceil(log2(self.size + 1)))
+        Interface.__init__(self, data_width = 32, addr_width = ceil(log2(self.size)))
         self.memory_map = MemoryMap(data_width = self.data_width,
                                     addr_width = self.addr_width,
                                     alignment = 0)

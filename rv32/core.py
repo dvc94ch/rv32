@@ -1,5 +1,9 @@
 from nmigen import *
 from nmigen.hdl.rec import *
+from nmigen.sim import *
+from .alu import ALU
+from .regs import Registers
+from .rom import ROM
 
 wishbone_layout = [
     ("adr",   30, DIR_FANOUT),
@@ -60,12 +64,11 @@ class RV32(Elaboratable):
 
         pc = Signal(32, reset=self.reset_address)
         next_pc = Signal(32)
+        trap = Signal()
+        intr = Signal()
 
-        regfile = Memory(width = 31, depth = 32)
         decoder = m.submodules.decoder = Decoder()
-        rs1     = m.submodules.rs1     = regfile.read_port()
-        rs2     = m.submodules.rs2     = regfile.read_port()
-        rd      = m.submodules.rd      = regfile.write_port()
+        regs    = m.submodules.regs    = Registers()
         alu     = m.submodules.alu     = ALU()
 
         m.d.comb += [
@@ -73,55 +76,21 @@ class RV32(Elaboratable):
             self.ibus.cyc.eq(1),
             self.ibus.stb.eq(1),
             decoder.inst.eq(self.ibus.dat_r),
-            rs1.addr.eq(~decoder.rs1),
-            rs2.addr.eq(~decoder.rs2),
-            rd.addr.eq(~decoder.rd),
+            regs.rs1_addr.eq(decoder.rs1),
+            regs.rs2_addr.eq(decoder.rs2),
             alu.funct4.eq(decoder.funct4),
-            alu.in1.eq(rs1.data),
-            rd.data.eq(alu.out),
+            alu.in1.eq(regs.rs1_data),
+            regs.rd_data.eq(alu.out),
         ]
         m.d.sync += [
-            alu.in2.eq(Mux(decoder.shamt_or_reg, rs2.data, decoder.imm)),
+            alu.in2.eq(Mux(decoder.shamt_or_reg, regs.rs2_data, decoder.imm)),
+            regs.rd_addr.eq(decoder.rd),
         ]
 
-        with m.FSM():
-            with m.State('FETCH'):
-                m.d.comb += self.ibus.cyc.eq(1)
-                with m.If(self.ibus.ack == 1):
-                    m.next = 'EXECUTE'
-                    m.d.comb += [
-                        next_pc.eq(Mux(decoder.trap, self.reset_address, pc + 4)),
-                    ]
-                    m.d.sync += [
-                        self.rvfi.pc_rdata.eq(pc),
-                        self.rvfi.pc_wdata.eq(next_pc),
-                        self.rvfi.trap.eq(decoder.trap),
-                        self.rvfi.insn.eq(self.ibus.dat_r),
-                        self.rvfi.rs1_addr.eq(decoder.rs1),
-                        self.rvfi.rs2_addr.eq(decoder.rs2),
-                        self.rvfi.rd_addr.eq(decoder.rd),
-                        pc.eq(next_pc),
-                    ]
-            with m.State('EXECUTE'):
-                m.next = 'FETCH'
-                m.d.comb += [
-                    rd.en.eq(~self.rvfi.trap),
-                    self.rvfi.valid.eq(~self.rvfi.trap),
-                ]
-
-        with m.If(self.rvfi.valid == 1):
-            m.d.sync += [
-                self.rvfi.order.eq(self.rvfi.order + 1),
-            ]
         m.d.comb += [
             self.rvfi.halt.eq(0),
-            self.rvfi.intr.eq(0),
             self.rvfi.mode.eq(Const(3)), # M-mode
             self.rvfi.ixl.eq(Const(1)), # XLEN=32
-            # Integer Register Read/Write
-            self.rvfi.rs1_rdata.eq(rs1.data),
-            self.rvfi.rs2_rdata.eq(rs2.data),
-            self.rvfi.rd_wdata.eq(rd.data),
             # Memory Access
             self.rvfi.mem_addr.eq(0),
             self.rvfi.mem_wmask.eq(0),
@@ -130,7 +99,46 @@ class RV32(Elaboratable):
             self.rvfi.mem_wdata.eq(0),
         ]
 
+        with m.FSM():
+            with m.State('FETCH'):
+                m.d.comb += self.ibus.cyc.eq(1)
+                with m.If(self.ibus.ack):
+                    m.next = 'EXECUTE'
+                    with m.If(decoder.trap):
+                        m.d.comb += next_pc.eq(pc)
+                        m.d.comb += trap.eq(1)
+                    with m.Else():
+                        m.d.comb += next_pc.eq(pc + 4)
+                        m.d.comb += trap.eq(0)
+
+                    m.d.sync += [
+                        self.rvfi.pc_rdata.eq(pc),
+                        self.rvfi.pc_wdata.eq(next_pc),
+                        self.rvfi.insn.eq(self.ibus.dat_r),
+                        self.rvfi.rs1_addr.eq(decoder.rs1),
+                        self.rvfi.rs2_addr.eq(decoder.rs2),
+                        self.rvfi.rd_addr.eq(decoder.rd),
+                        self.rvfi.trap.eq(trap),
+                        intr.eq(trap | intr),
+                        pc.eq(next_pc),
+                    ]
+            with m.State('EXECUTE'):
+                m.next = 'FETCH'
+                m.d.comb += [
+                    self.rvfi.valid.eq(~self.rvfi.trap),
+                    regs.rd_we.eq(self.rvfi.valid),
+                    self.rvfi.intr.eq(self.rvfi.valid & intr),
+                    self.rvfi.rs1_rdata.eq(regs.rs1_data),
+                    self.rvfi.rs2_rdata.eq(regs.rs2_data),
+                    self.rvfi.rd_wdata.eq(Mux(self.rvfi.rd_addr, regs.rd_data, 0)),
+                ]
+                with m.If(self.rvfi.valid):
+                    m.d.sync += self.rvfi.order.eq(self.rvfi.order + 1)
+                    m.d.sync += intr.eq(0)
+                m.d.sync += self.rvfi.trap.eq(0)
+
         return m
+
 
 
 class Decoder(Elaboratable):
@@ -218,55 +226,6 @@ class Opcode:
     REG    = 0b01100
 
 
-class Funct4:
-    ADD  = 0b0000
-    SUB  = 0b0001
-    SLL  = 0b0010
-    SLT  = 0b0100
-    SLTU = 0b0110
-    XOR  = 0b1000
-    SRL  = 0b1010
-    SRA  = 0b1011
-    OR   = 0b1100
-    AND  = 0b1110
-
-
-class ALU(Elaboratable):
-    def __init__(self):
-        self.funct4 = Signal(4)
-        self.in1 = Signal(32)
-        self.in2 = Signal(32)
-        self.out = Signal(32)
-
-    def elaborate(self, platform):
-        m = Module()
-        with m.Switch(self.funct4):
-            with m.Case(Funct4.ADD):
-                m.d.comb += self.out.eq(self.in1 + self.in2)
-            with m.Case(Funct4.SUB):
-                m.d.comb += self.out.eq(self.in1 - self.in2)
-            with m.Case(Funct4.SLL):
-                m.d.comb += self.out.eq(self.in1 << self.in2[:5])
-            with m.Case(Funct4.SLT):
-                # TODO
-                pass
-            with m.Case(Funct4.SLTU):
-                # TODO
-                pass
-            with m.Case(Funct4.XOR):
-                m.d.comb += self.out.eq(self.in1 ^ self.in2)
-            with m.Case(Funct4.SRL):
-                m.d.comb += self.out.eq(self.in1 >> self.in2[:5])
-            with m.Case(Funct4.SRA):
-                # TODO
-                pass
-            with m.Case(Funct4.OR):
-                m.d.comb += self.out.eq(self.in1 | self.in2)
-            with m.Case(Funct4.AND):
-                m.d.comb += self.out.eq(self.in1 & self.in2)
-        return m
-
-
 class Top(Elaboratable):
     def __init__(self, prog):
         self.cpu = RV32(with_rvfi=True)
@@ -297,8 +256,6 @@ class Top(Elaboratable):
         return m
 
 if __name__ == '__main__':
-    from nmigen.sim import *
-    from rom import ROM
     prog = [
         0b000000000001_00000_000_00001_0010011, # addi x1, x0, 1
         0b000000000001_00001_000_00001_0010011, # addi x1, x1, 1
