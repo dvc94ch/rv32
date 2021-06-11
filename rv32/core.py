@@ -71,6 +71,7 @@ class RV32(Elaboratable):
 
         pc = Signal(32, reset=self.reset_address)
         pc_next = Signal(32)
+        pc_next_temp = Signal(32)
         pc_4 = Signal(32)
         inst = Signal(32)
         m.d.comb += pc_4.eq(pc + 4)
@@ -85,44 +86,45 @@ class RV32(Elaboratable):
             regs.rs1_addr.eq(decoder.rs1),
             regs.rs2_addr.eq(decoder.rs2),
             regs.rd_addr.eq(decoder.rd),
-            alu.funct4.eq(Cat(decoder.funct1, decoder.funct3)),
             alu.in1.eq(Mux(rs1_en, regs.rs1_data, pc)),
             alu.in2.eq(Mux(rs2_en, regs.rs2_data, decoder.imm)),
             branch.funct3.eq(decoder.funct3),
             branch.in1.eq(regs.rs1_data),
             branch.in2.eq(regs.rs2_data),
+            trap.eq(decoder.trap | pc_next_temp[0] | pc_next_temp[1]),
+            pc_next.eq(Mux(trap, pc, pc_next_temp)),
         ]
 
         with m.Switch(decoder.pc_op):
             with m.Case(PcOp.NEXT):
                 m.d.comb += [
+                    alu.funct4.eq(Cat(decoder.funct1, decoder.funct3)),
                     rs1_en.eq(decoder.rs1_en),
                     rs2_en.eq(decoder.rs2_en),
-                    pc_next.eq(pc_4),
+                    pc_next_temp.eq(pc_4),
                     regs.rd_data.eq(alu.out),
                 ]
             with m.Case(PcOp.JAL):
                 m.d.comb += [
                     rs1_en.eq(0),
                     rs2_en.eq(0),
-                    pc_next.eq(alu.out),
+                    pc_next_temp.eq(alu.out),
                     regs.rd_data.eq(pc_4),
                 ]
             with m.Case(PcOp.JALR):
                 m.d.comb += [
                     rs1_en.eq(1),
                     rs2_en.eq(0),
-                    pc_next.eq(alu.out),
+                    pc_next_temp.eq(alu.out),
                     regs.rd_data.eq(pc_4),
                 ]
             with m.Case(PcOp.BRANCH):
                 m.d.comb += [
+                    alu.funct4.eq(0),
                     rs1_en.eq(0),
                     rs2_en.eq(0),
-                    pc_next.eq(Mux(branch.out, alu.out, pc_4)),
+                    pc_next_temp.eq(Mux(branch.out, alu.out, pc_4)),
                 ]
-        with m.If(decoder.trap):
-            m.d.comb += pc_next.eq(pc)
 
         with m.FSM():
             with m.State('FETCH'):
@@ -134,7 +136,6 @@ class RV32(Elaboratable):
             with m.State('EXECUTE'):
                 m.next = 'WRITE'
                 m.d.comb += decoder.inst.eq(inst)
-                m.d.comb += trap.eq(decoder.trap | pc_next[0] | pc_next[1])
                 m.d.comb += regs.rd_we.eq(~trap & decoder.rd_en)
                 m.d.comb += self.rvfi.valid.eq(~trap)
                 m.d.comb += self.rvfi.trap.eq(trap)

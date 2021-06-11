@@ -97,7 +97,7 @@ class Decoder(Elaboratable):
                     self.rs1.eq(0),
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
-                    self.funct3.eq(000),
+                    self.funct3.eq(0),
                     self.imm.eq(imm_u),
             ]
             with m.Case(Opcode.AUIPC):
@@ -105,7 +105,7 @@ class Decoder(Elaboratable):
                     self.rs1_en.eq(0),
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
-                    self.funct3.eq(000),
+                    self.funct3.eq(0),
                     self.imm.eq(imm_u),
                 ]
             with m.Case(Opcode.JAL):
@@ -114,7 +114,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
                     self.pc_op.eq(PcOp.JAL),
-                    self.funct3.eq(000),
+                    self.funct3.eq(0),
                     self.imm.eq(imm_j),
                 ]
             with m.Case(Opcode.JALR):
@@ -123,7 +123,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
                     self.pc_op.eq(PcOp.JALR),
-                    self.funct3.eq(000),
+                    self.funct3.eq(0),
                     self.imm.eq(imm_i),
                 ]
             with m.Case(Opcode.BRANCH):

@@ -30,7 +30,7 @@ class Branch(Elaboratable):
             with m.Case(Funct3.BGE):
                 m.d.comb += self.out.eq(self.in1 >= self.in2)
             with m.Case(Funct3.BLTU):
-                m.d.comb += self.out.eq(self.in1 < self.in2)
+                m.d.comb += self.out.eq(Cat(0, self.in1) < Cat(0, self.in2))
             with m.Case(Funct3.BGEU):
-                m.d.comb += self.out.eq(self.in1 >= self.in2)
+                m.d.comb += self.out.eq(Cat(0, self.in1) >= Cat(0, self.in2))
         return m
