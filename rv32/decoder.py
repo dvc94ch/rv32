@@ -15,9 +15,9 @@ class Opcode:
 
 class PcOp:
     NEXT   = 0b00
-    JAL    = 0b01
-    JALR   = 0b10
-    BRANCH = 0b11
+    BRANCH = 0b01
+    JAL    = 0b10
+    JALR   = 0b11
 
 class Decoder(Elaboratable):
     def __init__(self):
@@ -33,7 +33,8 @@ class Decoder(Elaboratable):
         self.rd_en = Signal()
 
         self.pc_op = Signal(2)
-        self.funct4 = Signal(4)
+        self.funct3 = Signal(3)
+        self.funct1 = Signal()
 
         self.imm = Signal(32)
 
@@ -59,7 +60,7 @@ class Decoder(Elaboratable):
             imm_s.eq(Cat(inst[7], inst[8:12], inst[25:31], Repl(inst[31], 21))),
             imm_b.eq(Cat(0, inst[8:12], inst[25:31], inst[7], Repl(inst[31], 20))),
             imm_u.eq(Cat(Repl(0, 12), inst[12:20], inst[20:31], inst[31])),
-            imm_j.eq(Cat(0, inst[21:25], inst[25:31], inst[20], inst[12:19], Repl(inst[31], 12))),
+            imm_j.eq(Cat(0, inst[21:25], inst[25:31], inst[20], inst[12:20], Repl(inst[31], 12))),
         ]
 
         funct1 = Signal()
@@ -69,7 +70,7 @@ class Decoder(Elaboratable):
             self.rs1.eq(Mux(self.rs1_en, rs1, 0)),
             self.rs2.eq(Mux(self.rs2_en, rs2, 0)),
             self.rd.eq(Mux(self.rd_en, rd, 0)),
-            self.funct4.eq(Cat(funct1, funct3)),
+            self.funct3.eq(funct3),
         ]
 
         with m.Switch(funct7):
@@ -92,9 +93,11 @@ class Decoder(Elaboratable):
         with m.Switch(opcode):
             with m.Case(Opcode.LUI):
                 m.d.comb += [
-                    self.rs1_en.eq(0),
+                    self.rs1_en.eq(1),
+                    self.rs1.eq(0),
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
+                    self.funct3.eq(000),
                     self.imm.eq(imm_u),
             ]
             with m.Case(Opcode.AUIPC):
@@ -102,6 +105,7 @@ class Decoder(Elaboratable):
                     self.rs1_en.eq(0),
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
+                    self.funct3.eq(000),
                     self.imm.eq(imm_u),
                 ]
             with m.Case(Opcode.JAL):
@@ -110,6 +114,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
                     self.pc_op.eq(PcOp.JAL),
+                    self.funct3.eq(000),
                     self.imm.eq(imm_j),
                 ]
             with m.Case(Opcode.JALR):
@@ -118,6 +123,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
                     self.pc_op.eq(PcOp.JALR),
+                    self.funct3.eq(000),
                     self.imm.eq(imm_i),
                 ]
             with m.Case(Opcode.BRANCH):
@@ -156,9 +162,12 @@ class Decoder(Elaboratable):
                     self.imm.eq(imm_s),
                 ]
             with m.Case(Opcode.IMM):
-                with m.Switch(Cat(funct3, funct1_valid)):
+                with m.Switch(Cat(funct1_valid, funct3)):
                     with m.Case('-011'):
-                        m.d.comb += self.imm.eq(inst[20:25])
+                        m.d.comb += [
+                            self.imm.eq(rs2),
+                            self.funct1.eq(funct1),
+                        ]
                     with m.Case('-010'):
                         m.d.comb += self.trap.eq(1)
                     with m.Default():
@@ -176,6 +185,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(1),
                     self.rd_en.eq(1),
                     self.imm.eq(0),
+                    self.funct1.eq(funct1),
                 ]
             with m.Default():
                 m.d.comb += self.trap.eq(1)
@@ -192,7 +202,7 @@ def test_decoder(inst, funct4):
             yield dut.inst.eq(inst)
             yield Settle()
             assert(yield ~dut.trap)
-            out = yield dut.funct4
+            out = yield Cat(dut.funct1, dut.funct3)
             if out != funct4:
                 raise ValueError('expected %s but got %s' % (funct4, out))
 

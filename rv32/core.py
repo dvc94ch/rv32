@@ -2,7 +2,8 @@ from nmigen import *
 from nmigen.hdl.rec import *
 from nmigen.sim import *
 from .alu import ALU
-from .decoder import Decoder
+from .branch import Branch
+from .decoder import Decoder, PcOp
 from .regs import Registers
 from .rom import ROM
 
@@ -63,18 +64,19 @@ class RV32(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        pc = Signal(32, reset=self.reset_address)
-        next_pc = Signal(32)
-        trap = Signal()
-        intr = Signal()
-        funct4 = Signal(4)
-        imm = Signal(32)
-        imm_en = Signal()
-
         decoder = m.submodules.decoder = Decoder()
         regs    = m.submodules.regs    = Registers()
         alu     = m.submodules.alu     = ALU()
+        branch  = m.submodules.branch  = Branch()
 
+        pc = Signal(32, reset=self.reset_address)
+        pc_next = Signal(32)
+        pc_4 = Signal(32)
+        inst = Signal(32)
+        m.d.comb += pc_4.eq(pc + 4)
+        rs1_en = Signal()
+        rs2_en = Signal()
+        trap = Signal()
         m.d.comb += [
             self.ibus.adr.eq(pc[2:]),
             self.ibus.cyc.eq(1),
@@ -82,22 +84,81 @@ class RV32(Elaboratable):
             decoder.inst.eq(self.ibus.dat_r),
             regs.rs1_addr.eq(decoder.rs1),
             regs.rs2_addr.eq(decoder.rs2),
-            alu.funct4.eq(funct4),
-            alu.in1.eq(regs.rs1_data),
-            alu.in2.eq(Mux(imm_en, imm, regs.rs2_data)),
-            regs.rd_data.eq(alu.out),
-        ]
-        m.d.sync += [
-            funct4.eq(decoder.funct4),
-            imm.eq(decoder.imm),
-            imm_en.eq(decoder.imm_en),
             regs.rd_addr.eq(decoder.rd),
+            alu.funct4.eq(Cat(decoder.funct1, decoder.funct3)),
+            alu.in1.eq(Mux(rs1_en, regs.rs1_data, pc)),
+            alu.in2.eq(Mux(rs2_en, regs.rs2_data, decoder.imm)),
+            branch.funct3.eq(decoder.funct3),
+            branch.in1.eq(regs.rs1_data),
+            branch.in2.eq(regs.rs2_data),
         ]
+
+        with m.Switch(decoder.pc_op):
+            with m.Case(PcOp.NEXT):
+                m.d.comb += [
+                    rs1_en.eq(decoder.rs1_en),
+                    rs2_en.eq(decoder.rs2_en),
+                    pc_next.eq(pc_4),
+                    regs.rd_data.eq(alu.out),
+                ]
+            with m.Case(PcOp.JAL):
+                m.d.comb += [
+                    rs1_en.eq(0),
+                    rs2_en.eq(0),
+                    pc_next.eq(alu.out),
+                    regs.rd_data.eq(pc_4),
+                ]
+            with m.Case(PcOp.JALR):
+                m.d.comb += [
+                    rs1_en.eq(1),
+                    rs2_en.eq(0),
+                    pc_next.eq(alu.out),
+                    regs.rd_data.eq(pc_4),
+                ]
+            with m.Case(PcOp.BRANCH):
+                m.d.comb += [
+                    rs1_en.eq(0),
+                    rs2_en.eq(0),
+                    pc_next.eq(Mux(branch.out, alu.out, pc_4)),
+                ]
+        with m.If(decoder.trap):
+            m.d.comb += pc_next.eq(pc)
+
+        with m.FSM():
+            with m.State('FETCH'):
+                m.d.comb += self.ibus.cyc.eq(1)
+                with m.If(self.ibus.ack):
+                    m.next = 'EXECUTE'
+                    m.d.sync += inst.eq(self.ibus.dat_r)
+                    m.d.comb += decoder.inst.eq(self.ibus.dat_r)
+            with m.State('EXECUTE'):
+                m.next = 'WRITE'
+                m.d.comb += decoder.inst.eq(inst)
+                m.d.comb += trap.eq(decoder.trap | pc_next[0] | pc_next[1])
+                m.d.comb += regs.rd_we.eq(~trap & decoder.rd_en)
+                m.d.comb += self.rvfi.valid.eq(~trap)
+                m.d.comb += self.rvfi.trap.eq(trap)
+                m.d.sync += pc.eq(pc_next)
+            with m.State('WRITE'):
+                m.next = 'FETCH'
 
         m.d.comb += [
             self.rvfi.halt.eq(0),
             self.rvfi.mode.eq(Const(3)), # M-mode
             self.rvfi.ixl.eq(Const(1)), # XLEN=32
+            self.rvfi.intr.eq(0),
+
+            self.rvfi.pc_rdata.eq(pc),
+            self.rvfi.pc_wdata.eq(pc_next),
+            self.rvfi.insn.eq(inst),
+            self.rvfi.rs1_addr.eq(decoder.rs1),
+            self.rvfi.rs1_rdata.eq(regs.rs1_data),
+            self.rvfi.rs2_addr.eq(decoder.rs2),
+            self.rvfi.rs2_rdata.eq(regs.rs2_data),
+            self.rvfi.rd_addr.eq(decoder.rd),
+            self.rvfi.rd_wdata.eq(Mux(decoder.rd_en & (regs.rd_addr != 0), regs.rd_data, 0)),
+            self.rvfi.trap.eq(trap),
+
             # Memory Access
             self.rvfi.mem_addr.eq(0),
             self.rvfi.mem_wmask.eq(0),
@@ -105,44 +166,8 @@ class RV32(Elaboratable):
             self.rvfi.mem_rdata.eq(0),
             self.rvfi.mem_wdata.eq(0),
         ]
-
-        with m.FSM():
-            with m.State('FETCH'):
-                m.d.comb += self.ibus.cyc.eq(1)
-                with m.If(self.ibus.ack):
-                    m.next = 'EXECUTE'
-                    with m.If(decoder.trap):
-                        m.d.comb += next_pc.eq(pc)
-                        m.d.comb += trap.eq(1)
-                    with m.Else():
-                        m.d.comb += next_pc.eq(pc + 4)
-                        m.d.comb += trap.eq(0)
-
-                    m.d.sync += [
-                        self.rvfi.pc_rdata.eq(pc),
-                        self.rvfi.pc_wdata.eq(next_pc),
-                        self.rvfi.insn.eq(self.ibus.dat_r),
-                        self.rvfi.rs1_addr.eq(decoder.rs1),
-                        self.rvfi.rs2_addr.eq(decoder.rs2),
-                        self.rvfi.rd_addr.eq(decoder.rd),
-                        self.rvfi.trap.eq(trap),
-                        intr.eq(trap | intr),
-                        pc.eq(next_pc),
-                    ]
-            with m.State('EXECUTE'):
-                m.next = 'FETCH'
-                m.d.comb += [
-                    self.rvfi.valid.eq(~self.rvfi.trap),
-                    regs.rd_we.eq(self.rvfi.valid),
-                    self.rvfi.intr.eq(self.rvfi.valid & intr),
-                    self.rvfi.rs1_rdata.eq(regs.rs1_data),
-                    self.rvfi.rs2_rdata.eq(regs.rs2_data),
-                    self.rvfi.rd_wdata.eq(Mux(self.rvfi.rd_addr, regs.rd_data, 0)),
-                ]
-                with m.If(self.rvfi.valid):
-                    m.d.sync += self.rvfi.order.eq(self.rvfi.order + 1)
-                    m.d.sync += intr.eq(0)
-                m.d.sync += self.rvfi.trap.eq(0)
+        with m.If(self.rvfi.valid):
+            m.d.sync += self.rvfi.order.eq(self.rvfi.order + 1)
 
         return m
 
@@ -185,43 +210,46 @@ if __name__ == '__main__':
     ]
     dut = Top(prog)
     sim = Simulator(dut)
+    assert_en = False
     with sim.write_vcd('rv32.vcd'):
+        def step():
+            yield Tick()
+            yield Settle()
+            while (yield dut.rvfi.valid) != 1:
+                yield Tick()
+                yield Settle()
+
         def proc():
-            yield Tick()
-            yield Tick()
-            yield Settle()
-            assert(yield dut.rvfi.valid == 1)
-            assert(yield dut.rvfi.pc_rdata == 0)
-            assert(yield dut.rvfi.pc_wdata == 4)
-            assert(yield dut.rvfi.insn == prog[0])
-            assert(yield dut.rvfi.rs1_addr == 0)
-            assert(yield dut.rvfi.rs1_rdata == 0)
-            assert(yield dut.rvfi.rd_addr == 1)
-            assert(yield dut.rvfi.rd_wdata == 1)
+            clock = 0
+            yield from step()
+            if assert_en:
+                assert(yield dut.rvfi.pc_rdata == 0)
+                assert(yield dut.rvfi.pc_wdata == 4)
+                assert(yield dut.rvfi.insn == prog[0])
+                assert(yield dut.rvfi.rs1_addr == 0)
+                assert(yield dut.rvfi.rs1_rdata == 0)
+                assert(yield dut.rvfi.rd_addr == 1)
+                assert(yield dut.rvfi.rd_wdata == 1)
 
-            yield Tick()
-            yield Tick()
-            yield Settle()
-            assert(yield dut.rvfi.valid == 1)
-            assert(yield dut.rvfi.pc_rdata == 4)
-            assert(yield dut.rvfi.pc_wdata == 8)
-            assert(yield dut.rvfi.insn == prog[1])
-            assert(yield dut.rvfi.rs1_addr == 1)
-            assert(yield dut.rvfi.rs1_rdata == 1)
-            assert(yield dut.rvfi.rd_addr == 1)
-            assert(yield dut.rvfi.rd_wdata == 2)
+            yield from step()
+            if assert_en:
+                assert(yield dut.rvfi.pc_rdata == 4)
+                assert(yield dut.rvfi.pc_wdata == 8)
+                assert(yield dut.rvfi.insn == prog[1])
+                assert(yield dut.rvfi.rs1_addr == 1)
+                assert(yield dut.rvfi.rs1_rdata == 1)
+                assert(yield dut.rvfi.rd_addr == 1)
+                assert(yield dut.rvfi.rd_wdata == 2)
 
-            yield Tick()
-            yield Tick()
-            yield Settle()
-            assert(yield dut.rvfi.valid == 1)
-            assert(yield dut.rvfi.pc_rdata == 8)
-            assert(yield dut.rvfi.pc_wdata == 12)
-            assert(yield dut.rvfi.insn == prog[2])
-            assert(yield dut.rvfi.rs1_addr == 1)
-            assert(yield dut.rvfi.rs1_rdata == 2)
-            assert(yield dut.rvfi.rd_addr == 1)
-            assert(yield dut.rvfi.rd_wdata == 3)
+            yield from step()
+            if assert_en:
+                assert(yield dut.rvfi.pc_rdata == 8)
+                assert(yield dut.rvfi.pc_wdata == 12)
+                assert(yield dut.rvfi.insn == prog[2])
+                assert(yield dut.rvfi.rs1_addr == 1)
+                assert(yield dut.rvfi.rs1_rdata == 2)
+                assert(yield dut.rvfi.rd_addr == 1)
+                assert(yield dut.rvfi.rd_wdata == 3)
 
             yield Tick()
             yield Tick()
