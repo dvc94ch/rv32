@@ -33,6 +33,8 @@ class Decoder(Elaboratable):
         self.rd_en = Signal()
 
         self.pc_op = Signal(2)
+        self.mem_op_en = Signal()
+        self.mem_op_store = Signal()
         self.funct3 = Signal(3)
         self.funct1 = Signal()
 
@@ -148,6 +150,7 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(0),
                     self.rd_en.eq(1),
                     self.imm.eq(imm_i),
+                    self.mem_op_en.eq(1),
                 ]
             with m.Case(Opcode.STORE):
                 with m.Switch(funct3):
@@ -160,6 +163,8 @@ class Decoder(Elaboratable):
                     self.rs2_en.eq(1),
                     self.rd_en.eq(0),
                     self.imm.eq(imm_s),
+                    self.mem_op_en.eq(1),
+                    self.mem_op_store.eq(1),
                 ]
             with m.Case(Opcode.IMM):
                 with m.Switch(Cat(funct1_valid, funct3)):

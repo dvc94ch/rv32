@@ -31,6 +31,18 @@ def main():
         cpu.ibus.stb,
         cpu.ibus.we,
         cpu.ibus.err,
+
+        cpu.dbus.ack,
+        cpu.dbus.adr,
+        cpu.dbus.bte,
+        cpu.dbus.cti,
+        cpu.dbus.cyc,
+        cpu.dbus.dat_r,
+        cpu.dbus.dat_w,
+        cpu.dbus.sel,
+        cpu.dbus.stb,
+        cpu.dbus.we,
+        cpu.dbus.err,
     ]
 
     if args.with_rvfi:

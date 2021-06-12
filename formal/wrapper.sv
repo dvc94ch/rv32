@@ -21,6 +21,24 @@ module rvfi_wrapper (
 	(* keep *) wire [ 1:0] ibus_bte;
 	(* keep *) wire        ibus_err;
 
+	(* keep *) `rvformal_rand_reg [31:0] dbus_dat_r_randval;
+	(* keep *) `rvformal_rand_reg dbus_ack_randval;
+
+        assign dbus_dat_r = dbus_dat_r_randval;
+        assign dbus_ack = dbus_ack_randval;
+
+	(* keep *) wire [29:0] dbus_adr;
+	(* keep *) wire [31:0] dbus_dat_w;
+	(* keep *) wire [31:0] dbus_dat_r;
+	(* keep *) wire [ 3:0] dbus_sel;
+	(* keep *) wire        dbus_cyc;
+	(* keep *) wire        dbus_stb;
+	(* keep *) wire        dbus_ack;
+	(* keep *) wire        dbus_we;
+	(* keep *) wire [ 2:0] dbus_cti;
+	(* keep *) wire [ 1:0] dbus_bte;
+	(* keep *) wire        dbus_err;
+
 	rv32_cpu uut (
 		.clk       (clock),
 		.rst       (reset),
@@ -36,6 +54,18 @@ module rvfi_wrapper (
 		.ibus__cti          (ibus_cti),
 		.ibus__bte          (ibus_bte),
 		.ibus__err          (ibus_err),
+
+                .dbus__adr          (dbus_adr),
+		.dbus__dat_w        (dbus_dat_w),
+		.dbus__dat_r        (dbus_dat_r),
+		.dbus__sel          (dbus_sel),
+		.dbus__cyc          (dbus_cyc),
+		.dbus__stb          (dbus_stb),
+		.dbus__ack          (dbus_ack),
+		.dbus__we           (dbus_we),
+		.dbus__cti          (dbus_cti),
+		.dbus__bte          (dbus_bte),
+		.dbus__err          (dbus_err),
 
 		.rvfi__valid        (rvfi_valid),
 		.rvfi__order        (rvfi_order),
