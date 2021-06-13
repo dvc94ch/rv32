@@ -2,6 +2,7 @@
 *.s
 *.o
 *.v
+*.gtkw
 build/
 checks/
 __pycache__/

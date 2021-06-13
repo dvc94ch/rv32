@@ -4,6 +4,7 @@ from nmigen.sim import *
 from .alu import ALU
 from .branch import Branch
 from .decoder import Decoder, PcOp
+from .loadstore import LoadStore
 from .regs import Registers
 from .ram import RAM
 from .rom import ROM
@@ -65,10 +66,11 @@ class RV32(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        decoder = m.submodules.decoder = Decoder()
-        regs    = m.submodules.regs    = Registers()
-        alu     = m.submodules.alu     = ALU()
-        branch  = m.submodules.branch  = Branch()
+        decoder   = m.submodules.decoder   = Decoder()
+        regs      = m.submodules.regs      = Registers()
+        alu       = m.submodules.alu       = ALU()
+        branch    = m.submodules.branch    = Branch()
+        loadstore = m.submodules.loadstore = LoadStore()
 
         pc = Signal(32, reset=self.reset_address)
         pc_next = Signal(32)
@@ -89,9 +91,6 @@ class RV32(Elaboratable):
         m.d.comb += [
             self.ibus.adr.eq(pc[2:]),
             self.ibus.cyc.eq(1),
-            self.dbus.adr.eq(mem_addr[2:]),
-            self.dbus.dat_w.eq(regs.rs2_data),
-            self.dbus.cyc.eq(1),
             decoder.inst.eq(self.ibus.dat_r),
             regs.rs1_addr.eq(decoder.rs1),
             regs.rs2_addr.eq(decoder.rs2),
@@ -101,9 +100,17 @@ class RV32(Elaboratable):
             branch.funct3.eq(decoder.funct3),
             branch.in1.eq(regs.rs1_data),
             branch.in2.eq(regs.rs2_data),
+            loadstore.funct3.eq(decoder.funct3),
+            loadstore.address.eq(mem_addr[:2]),
+            loadstore.value_in.eq(Mux(decoder.mem_op_store, regs.rs2_data, self.dbus.dat_r)),
+            loadstore.load.eq(decoder.mem_op_en & ~decoder.mem_op_store),
+            self.dbus.adr.eq(mem_addr[2:]),
+            self.dbus.sel.eq(loadstore.sel),
+            self.dbus.dat_w.eq(loadstore.value_out),
+            self.dbus.cyc.eq(1),
             illegal_inst.eq(decoder.trap),
             inst_addr_missaligned.eq(pc_next_temp[0] | pc_next_temp[1]),
-            mem_addr_missaligned.eq(mem_addr[0] | mem_addr[1]),
+            mem_addr_missaligned.eq(loadstore.trap),
             trap.eq(inst_addr_missaligned | illegal_inst | mem_addr_missaligned),
             pc_next.eq(Mux(trap, pc, pc_next_temp)),
             rd_en.eq(decoder.rd_en & ~decoder.mem_op_en),
@@ -180,7 +187,7 @@ class RV32(Elaboratable):
                     m.next = 'FETCH'
                     m.d.comb += [
                         regs.rd_we.eq(1),
-                        regs.rd_data.eq(self.dbus.dat_r),
+                        regs.rd_data.eq(loadstore.value_out),
                         self.rvfi.valid.eq(1),
                     ]
                     m.d.sync += pc.eq(pc_next)
@@ -204,9 +211,9 @@ class RV32(Elaboratable):
             self.rvfi.trap.eq(trap),
 
             # Memory Access
-            self.rvfi.mem_addr.eq(Mux(decoder.mem_op_en, mem_addr, 0)),
-            self.rvfi.mem_rmask.eq(Mux(decoder.mem_op_en & ~decoder.mem_op_store, 0b1111, 0)),
-            self.rvfi.mem_wmask.eq(Mux(decoder.mem_op_en & decoder.mem_op_store, 0b1111, 0)),
+            self.rvfi.mem_addr.eq(Mux(decoder.mem_op_en, Cat(0, 0, mem_addr[2:]), 0)),
+            self.rvfi.mem_rmask.eq(Mux(decoder.mem_op_en & ~decoder.mem_op_store, loadstore.sel, 0)),
+            self.rvfi.mem_wmask.eq(Mux(decoder.mem_op_en & decoder.mem_op_store, loadstore.sel, 0)),
             self.rvfi.mem_rdata.eq(Mux(decoder.mem_op_en & ~decoder.mem_op_store, self.dbus.dat_r, 0)),
             self.rvfi.mem_wdata.eq(Mux(decoder.mem_op_en & decoder.mem_op_store, self.dbus.dat_w, 0)),
         ]
