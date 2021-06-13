@@ -1,8 +1,9 @@
 *.vcd
-*.s
 *.o
+*.bin
 *.v
 *.gtkw
 build/
+formal/*.s
 checks/
 __pycache__/
