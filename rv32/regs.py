@@ -39,7 +39,7 @@ def test_regs(reg, data, res):
     dut = Registers()
     sim = Simulator(dut)
 
-    with sim.write_vcd('regs.vcd'):
+    with sim.write_vcd('vcd/regs.vcd'):
         def proc():
             yield dut.rd_addr.eq(reg)
             yield dut.rd_data.eq(data)

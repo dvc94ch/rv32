@@ -64,7 +64,7 @@ def assert_mem(address, expected, actual):
 if __name__ == "__main__":
     dut = RAM(32)
     sim = Simulator(dut)
-    with sim.write_vcd('ram.vcd'):
+    with sim.write_vcd('vcd/ram.vcd'):
         def proc():
             yield dut.cyc.eq(1)
             yield from ram_write_ut(dut, 0, 0x01234567)

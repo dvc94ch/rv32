@@ -53,7 +53,7 @@ def test_alu(funct4, in1, in2, expected):
     dut = ALU()
     sim = Simulator(dut)
 
-    with sim.write_vcd('alu.vcd'):
+    with sim.write_vcd('vcd/alu.vcd'):
         def proc():
             yield dut.funct4.eq(funct4)
             yield dut.in1.eq(in1)

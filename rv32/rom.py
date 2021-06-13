@@ -43,7 +43,7 @@ if __name__ == "__main__":
                0x0C0FFEE0, 0xDEC0FFEE,
                0xFEEBEEDE])
     sim = Simulator(dut)
-    with sim.write_vcd('rom.vcd'):
+    with sim.write_vcd('vcd/rom.vcd'):
         def proc():
             yield dut.cyc.eq(1)
             yield dut.stb.eq(1)

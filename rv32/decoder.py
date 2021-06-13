@@ -202,7 +202,7 @@ def test_decoder(inst, funct4):
     dut = Decoder()
     sim = Simulator(dut)
 
-    with sim.write_vcd('decoder.vcd'):
+    with sim.write_vcd('vcd/decoder.vcd'):
         def proc():
             yield dut.inst.eq(inst)
             yield Settle()

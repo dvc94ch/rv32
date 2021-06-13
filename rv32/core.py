@@ -210,7 +210,7 @@ class RV32(Elaboratable):
                 self.rvfi.rs2_addr.eq(decoder.rs2),
                 self.rvfi.rs2_rdata.eq(regs.rs2_data),
                 self.rvfi.rd_addr.eq(decoder.rd),
-                self.rvfi.rd_wdata.eq(Mux(decoder.rd_en & (regs.rd_addr != 0), regs.rd_data, 0)),
+                self.rvfi.rd_wdata.eq(Mux(regs.rd_we & (regs.rd_addr != 0), regs.rd_data, 0)),
                 self.rvfi.trap.eq(trap),
 
                 # Memory Access
@@ -292,7 +292,6 @@ def read_prog(path):
     return prog
 
 if __name__ == '__main__':
-    '''
     prog = [
         0xdead_c0b7, # lui   x1, 0xdeadc
         0xeef0_8093, # addi  x1, x1,-273
@@ -304,16 +303,12 @@ if __name__ == '__main__':
         0x0000_0073, # ecall
         0x0000_0013, # addi x0,x0,0
     ]
-    '''
-
-    #prog = read_prog('./tests/store_load.bin')
-    prog = read_prog('./tests/gpio.bin')
 
     dut = Top(prog, with_rvfi=True)
     sim = Simulator(dut)
     rvfi = dut.cpu.rvfi
     assert_en = False
-    with sim.write_vcd('rv32.vcd'):
+    with sim.write_vcd('vcd/rv32.vcd'):
         def step():
             clock = 0
             yield Tick()
