@@ -2,4 +2,5 @@ build/
 checks/
 formal/*.v
 vcd/
+specs/
 __pycache__/
